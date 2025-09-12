@@ -1,8 +1,7 @@
+import copy
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.animation as animation
+import plotly.graph_objects as go
 
 
 class ADAM_Optimization: 
@@ -22,8 +21,8 @@ class ADAM_Optimization:
         self.m = self.B1*self.m + (1-self.B1)*grad
         self.v = self.B2*self.v + (1-self.B2)*(grad**2)
 
-        m_hat = self.m#/(1-self.B1**self.t)
-        v_hat = self.v#/(1-self.B2**self.t)
+        m_hat = self.m/(1-self.B1**self.t)
+        v_hat = self.v/(1-self.B2**self.t)
 
         update = lr * m_hat/(v_hat+self.eps)**.5
         return update
@@ -81,77 +80,104 @@ class Surface:
         self.y_widths = torch.tensor(self.y_widths, dtype=torch.float32)
     
     def getSurface(self,x,y):
-        # Configure the parameters for the 
-        # print(f'{x_centers.shape} , {y_centers.shape}, {x_widths.shape}, {y_widths.shape}, {x.shape}, {y.shape}')
-
-
-        z = (x**2 + y**2) / 100  # Start with a parabolic component for variation
+        z = (x**2 + y**2) / 100  # parabolic component
         for i in range(self.num_peaks):
-            rand = torch.rand(1)-.5
-            #(rand)*5*
             z += torch.exp(-( (x - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
         return z
 
 
-def setup_animation(optimizer,surface, fig, ax,color ="black", no_of_frames=200):
-    no_of_frames = 200
-    x_start = torch.tensor([-19], dtype=torch.float32)
-    y_start = torch.tensor([-9], dtype=torch.float32)
-    z_start = surface.getSurface(x_start, y_start)
+def simulate_optimizer(optimizer, surface, no_of_frames=200, x_start=-19.0, y_start=-9.0):
+    # use a deepcopy so optimizer states don't interfere
+    opt = copy.deepcopy(optimizer)
+    opt.reset()
 
-    line, = ax.plot(x_start.numpy(force=True), y_start.numpy(force=True), z_start.numpy(force=True), color=color, linewidth=2)
+    xs = [float(x_start)]
+    ys = [float(y_start)]
+    with torch.no_grad():
+        z0 = surface.getSurface(torch.tensor([x_start]), torch.tensor([y_start]))
+    zs = [float(z0.item())]
 
-    def data_gen():
-        for _ in range(no_of_frames):
-            yield _
-
-    def init():
-        optimizer.reset()
-        line.set_data_3d([x_start.numpy(force=True), y_start.numpy(force=True), z_start.numpy(force=True)])
-        return line,
-    def run(data):
-        nonlocal line
-        X_line, Y_line, Z_line = line.get_data_3d()
-
-        x_t = torch.tensor([X_line[-1]], dtype=torch.float32, requires_grad=True)
-        y_t = torch.tensor([Y_line[-1]], dtype=torch.float32, requires_grad=True)
+    for _ in range(no_of_frames):
+        x_t = torch.tensor([xs[-1]], dtype=torch.float32, requires_grad=True)
+        y_t = torch.tensor([ys[-1]], dtype=torch.float32, requires_grad=True)
         z = surface.getSurface(x_t,y_t)
         z.backward()
         dx = x_t.grad.item()
         dy = y_t.grad.item()
 
-        new_X = X_line[-1] - optimizer.update(dx)
-        new_Y = Y_line[-1] - optimizer.update(dy)
-        new_Z = surface.getSurface(torch.tensor([new_X]), torch.tensor([new_Y]))
-        X_line =np.append(X_line, new_X) 
-        Y_line= np.append(Y_line, new_Y) 
-        Z_line= np.append(Z_line, new_Z.detach().numpy())
-        line.set_data_3d([X_line, Y_line, Z_line])
-        return line,
-    ani = animation.FuncAnimation(fig, run, data_gen, interval=200, save_count=no_of_frames, init_func=init)
-    
-    return ani
-        
+        upd_x = opt.update(dx)
+        upd_y = opt.update(dy)
 
-# def main():
+        new_x = xs[-1] - upd_x
+        new_y = ys[-1] - upd_y
+        new_z = surface.getSurface(torch.tensor([new_x]), torch.tensor([new_y]))
 
-surface = Surface()
-np_X, np_Y = np.meshgrid(np.arange(-20, 20, 0.1), np.arange(-10, 10, 0.1))
-X= torch.tensor(np_X, dtype=torch.float32)
-Y= torch.tensor(np_Y, dtype=torch.float32)
-Z = surface.getSurface(X,Y)
+        xs.append(float(new_x))
+        ys.append(float(new_y))
+        zs.append(float(new_z.item()))
+    return np.array(xs), np.array(ys), np.array(zs)
 
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d') 
-surf = ax.plot_surface(np_X, np_Y, Z.numpy(), cmap='plasma', alpha=.5)
 
-optimizer = ADAM_Optimization()
-ani = setup_animation(optimizer, surface, fig, ax, no_of_frames=200)
-ani2 = setup_animation(SGD(lr=0.1), surface, fig, ax, color='red', no_of_frames=200)
-an3 = setup_animation(RMSProp(lr=0.1), surface, fig, ax, color='green', no_of_frames=200)
-an4 = setup_animation(SGD_Momentum(lr=0.1), surface, fig, ax, color='blue', no_of_frames=200)
+def build_plotly_figure(surface, optimizers, names, colors, no_of_frames=200):
+    # Create surface mesh
+    np_X, np_Y = np.meshgrid(np.arange(-20, 20, 0.1), np.arange(-10, 10, 0.1))
+    X = torch.tensor(np_X, dtype=torch.float32)
+    Y = torch.tensor(np_Y, dtype=torch.float32)
+    Z = surface.getSurface(X, Y).numpy()
 
-plt.show()
+    # simulate each optimizer
+    sim_results = []
+    for opt in optimizers:
+        xs, ys, zs = simulate_optimizer(opt, surface, no_of_frames=no_of_frames)
+        sim_results.append((xs, ys, zs))
 
-# main()
-    
+    # Build initial figure: surface + one trace per optimizer
+    fig = go.Figure()
+    fig.add_trace(go.Surface(x=np_X, y=np_Y, z=Z, colorscale='Plasma', opacity=0.6, showscale=False, name='surface'))
+
+    # add scatter traces (initial single point)
+    for i, (xs, ys, zs) in enumerate(sim_results):
+        fig.add_trace(go.Scatter3d(x=[xs[0]], y=[ys[0]], z=[zs[0]], mode='lines+markers',
+                                   line=dict(color=colors[i], width=4), marker=dict(size=3), name=names[i]))
+
+    # frames: update the scatter traces (trace indices 1..n)
+    frames = []
+    trace_indices = list(range(1, 1 + len(sim_results)))
+    for k in range(1, no_of_frames + 1):
+        data = []
+        for xs, ys, zs in sim_results:
+            data.append(go.Scatter3d(x=xs[:k+1], y=ys[:k+1], z=zs[:k+1], mode='lines+markers',
+                                     line=dict(width=4)))
+        frames.append(go.Frame(data=data, name=str(k), traces=trace_indices))
+
+    fig.frames = frames
+
+    # slider and play button
+    steps = []
+    for k in range(1, no_of_frames + 1):
+        step = dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=50, redraw=True), transition=dict(duration=0))], label=str(k))
+        steps.append(step)
+
+    sliders = [dict(active=0, pad=dict(t=50), steps=steps)]
+
+    fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+                      width=900, height=700,
+                      updatemenus=[dict(type='buttons', showactive=False, y=0.05, x=0.1,
+                                        xanchor='right', yanchor='top',
+                                        pad=dict(t=45, r=10),
+                                        buttons=[dict(label='Play', method='animate', args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True, transition=dict(duration=0))]),
+                                                 dict(label='Pause', method='animate', args=[[None], dict(frame=dict(duration=0, redraw=False), mode='immediate', transition=dict(duration=0))])])],
+                      sliders=sliders)
+    return fig
+
+
+if __name__ == '__main__':
+    surface = Surface()
+    no_of_frames = 200
+    optimizers = [ADAM_Optimization(), SGD(lr=0.1), RMSProp(lr=0.1), SGD_Momentum(lr=0.1)]
+    names = ['ADAM', 'SGD', 'RMSProp', 'SGD_Mom']
+    colors = ['black', 'red', 'green', 'blue']
+
+    fig = build_plotly_figure(surface, optimizers, names, colors, no_of_frames=no_of_frames)
+    fig.write_html("visualizer_output.html", auto_open=True)
+
