@@ -1,158 +1,157 @@
-import matplotlib.pyplot as plt
+import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.animation as animation
 
 
+class ADAM_Optimization: 
+    def __init__(self):
+        self.B1 = 0.99
+        self.B2 = 0.99
+        self.eps = 1e-8
+        self.reset()
+
+    def reset(self):
+        self.t =0
+        self.m = 0
+        self.v= 0
+    
+    def update(self, grad, lr=0.3):
+        self.t += 1
+        self.m = self.B1*self.m + (1-self.B1)*grad
+        self.v = self.B2*self.v + (1-self.B2)*(grad**2)
+
+        m_hat = self.m#/(1-self.B1**self.t)
+        v_hat = self.v#/(1-self.B2**self.t)
+
+        update = lr * m_hat/(v_hat+self.eps)**.5
+        return update
+
+class SGD:
+    def __init__(self, lr=0.1):
+        self.lr = lr
+    
+    def reset(self):
+        pass
+
+    def update(self, grad):
+        return self.lr * grad
+    
+class RMSProp:
+    def __init__(self, lr=0.1, beta=0.9, eps=1e-8):
+        self.lr = lr
+        self.beta = beta
+        self.eps = eps
+        self.reset()
+    
+    def reset(self):
+        self.v = 0
+
+    def update(self, grad):
+        self.v = self.beta * self.v + (1-self.beta)*(grad**2)
+        update = self.lr * grad/(self.v+self.eps)**.5
+        return update
+class SGD_Momentum:
+    def __init__(self, lr=0.1, k_momentum=0.9):
+        self.lr = lr
+        self.k_momentum = k_momentum
+        self.reset()
+    
+    def reset(self):
+        self.v = 0
+
+    def update(self, grad):
+        self.v = self.k_momentum * self.v + self.lr * grad
+        return self.v
+
 class Surface:
-    def __init__(self, x_range, y_range, step=0.1, num_peaks=5):    
-        # Generate random parameters for each Gaussian
-        self.num_peaks = num_peaks
-        self.amplitudes = np.random.uniform(4, 5, num_peaks)  # Varying amplitudes, some negative
-        self.x_centers = np.random.uniform(x_range[0], x_range[1], num_peaks)
-        self.y_centers = np.random.uniform(y_range[0], y_range[1], num_peaks)
-        self.x_widths = np.random.uniform(0.5, 2, num_peaks)
-        self.y_widths = np.random.uniform(0.5, 2, num_peaks)
-        x = np.arange(x_range[0]*1.2, x_range[1]*1.2, step)
-        y = np.arange(y_range[0]*1.2, y_range[1]*1.2, step)
-        self.X, self.Y = np.meshgrid(x, y)
-        self.Z = np.zeros_like(self.X)
-        for i in range(num_peaks):
-            self.Z += self.amplitudes[i] * np.exp(-( (self.X - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (self.Y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
-        self.Z += (self.X**2 + self.Y**2) / 100  # Adding a parabolic component for variation
+    def __init__(self):
+        self.num_peaks = 50
+        self.x_range = (-20, 20)
+        self.y_range = (-10, 10)
+        self.x_centers = np.random.uniform(self.x_range[0], self.x_range[1], self.num_peaks)
+        self.y_centers = np.random.uniform(self.y_range[0], self.y_range[1], self.num_peaks)
+        self.x_widths = np.random.uniform(0.5, 2, self.num_peaks)
+        self.y_widths = np.random.uniform(0.5, 2, self.num_peaks)
+
+        self.x_centers = torch.tensor(self.x_centers, dtype=torch.float32)
+        self.y_centers = torch.tensor(self.y_centers, dtype=torch.float32)
+        self.x_widths = torch.tensor(self.x_widths, dtype=torch.float32)
+        self.y_widths = torch.tensor(self.y_widths, dtype=torch.float32)
     
-    def get_Z(self, x,y):
-        z =0
+    def getSurface(self,x,y):
+        # Configure the parameters for the 
+        # print(f'{x_centers.shape} , {y_centers.shape}, {x_widths.shape}, {y_widths.shape}, {x.shape}, {y.shape}')
+
+
+        z = (x**2 + y**2) / 100  # Start with a parabolic component for variation
         for i in range(self.num_peaks):
-            z += self.amplitudes[i] * np.exp(-( (x - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
-        z+= (x**2 + y**2) / 100  # Adding a parabolic component for variation
+            rand = torch.rand(1)-.5
+            #(rand)*5*
+            z += torch.exp(-( (x - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
         return z
+
+
+def setup_animation(optimizer,surface, fig, ax,color ="black", no_of_frames=200):
+    no_of_frames = 200
+    x_start = torch.tensor([-19], dtype=torch.float32)
+    y_start = torch.tensor([-9], dtype=torch.float32)
+    z_start = surface.getSurface(x_start, y_start)
+
+    line, = ax.plot(x_start.numpy(force=True), y_start.numpy(force=True), z_start.numpy(force=True), color=color, linewidth=2)
+
+    def data_gen():
+        for _ in range(no_of_frames):
+            yield _
+
+    def init():
+        optimizer.reset()
+        line.set_data_3d([x_start.numpy(force=True), y_start.numpy(force=True), z_start.numpy(force=True)])
+        return line,
+    def run(data):
+        nonlocal line
+        X_line, Y_line, Z_line = line.get_data_3d()
+
+        x_t = torch.tensor([X_line[-1]], dtype=torch.float32, requires_grad=True)
+        y_t = torch.tensor([Y_line[-1]], dtype=torch.float32, requires_grad=True)
+        z = surface.getSurface(x_t,y_t)
+        z.backward()
+        dx = x_t.grad.item()
+        dy = y_t.grad.item()
+
+        new_X = X_line[-1] - optimizer.update(dx)
+        new_Y = Y_line[-1] - optimizer.update(dy)
+        new_Z = surface.getSurface(torch.tensor([new_X]), torch.tensor([new_Y]))
+        X_line =np.append(X_line, new_X) 
+        Y_line= np.append(Y_line, new_Y) 
+        Z_line= np.append(Z_line, new_Z.detach().numpy())
+        line.set_data_3d([X_line, Y_line, Z_line])
+        return line,
+    ani = animation.FuncAnimation(fig, run, data_gen, interval=200, save_count=no_of_frames, init_func=init)
     
-    def get_slope(self, x, y):
-        x_slope = 0
-        y_slope = 0 
+    return ani
+        
 
-        for i in range(self.num_peaks):
-            common_term = self.amplitudes[i] * np.exp(-( (x - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
-            x_slope += common_term*(-(x - self.x_centers[i]) / (self.x_widths[i]**2))
-            y_slope += common_term*(-(y - self.y_centers[i]) / (self.y_widths[i]**2))
-        x_slope += x / 50  # Derivative of the parabolic component
-        y_slope += y / 50  # Derivative of the parabolic component
-        return x_slope, y_slope
-    def get_starting_point(self):
-        return self.x_centers[0], self.y_centers[0], self.get_Z(self.x_centers[0], self.y_centers[0])
+# def main():
 
-    def get_surface(self):
-        return self.X, self.Y, self.Z
+surface = Surface()
+np_X, np_Y = np.meshgrid(np.arange(-20, 20, 0.1), np.arange(-10, 10, 0.1))
+X= torch.tensor(np_X, dtype=torch.float32)
+Y= torch.tensor(np_Y, dtype=torch.float32)
+Z = surface.getSurface(X,Y)
 
-    def animate(self, ax, func, frames=100, interval=100, cmap='viridis'):
-        def update(frame):
-            ax.cla()
-            self.update_Z(lambda x, y: func(x, y, frame))
-            self.plot_surface(ax, cmap=cmap)
-            ax.set_xlabel('X-axis')
-            ax.set_ylabel('Y-axis')
-            ax.set_zlabel('Z-axis')
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d') 
+surf = ax.plot_surface(np_X, np_Y, Z.numpy(), cmap='plasma', alpha=.5)
 
-        ani = animation.FuncAnimation(plt.gcf(), update, frames=frames, interval=interval)
-        return ani
-def gaussian_sum_function(x, y, num_peaks=5):
-    """
-    Generates a function as a sum of 2D Gaussian functions
-    with random amplitudes and centers.
-    """
-    z = np.zeros_like(x)
-    
-    # Generate random parameters for each Gaussian
-    amplitudes = np.random.uniform(-5, 5, num_peaks)  # Varying amplitudes, some negative
-    x_centers = np.random.uniform(np.min(x), np.max(x), num_peaks)
-    y_centers = np.random.uniform(np.min(y), np.max(y), num_peaks)
-    widths = np.random.uniform(0.5, 2, num_peaks)
-    
-    # Sum the Gaussian functions
-    for i in range(num_peaks):
-        z += amplitudes[i] * np.exp(-((x - x_centers[i])**2 + (y - y_centers[i])**2) / (2 * widths[i]**2))
-    return z
+optimizer = ADAM_Optimization()
+ani = setup_animation(optimizer, surface, fig, ax, no_of_frames=200)
+ani2 = setup_animation(SGD(lr=0.1), surface, fig, ax, color='red', no_of_frames=200)
+an3 = setup_animation(RMSProp(lr=0.1), surface, fig, ax, color='green', no_of_frames=200)
+an4 = setup_animation(SGD_Momentum(lr=0.1), surface, fig, ax, color='blue', no_of_frames=200)
 
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection='3d')
-
-surface = Surface(x_range=(-20,20), y_range=(-10,10), step=0.1, num_peaks=70)
-X, Y, Z = surface.get_surface()
-# Z= Z+(X**2+Y**2)/100
-
-# plt.tight_layout()
-
-# Create a Matplotlib figure and 3D axes
-surf = ax.plot_surface(X, Y, Z, cmap='plasma', alpha=.5)
-
-
-x_start, y_start, z_start = surface.get_starting_point()
-mx =0
-my =0
-vx=0
-vy=0
-t =0
-x_run = np.array([x_start])
-y_run = np.array([y_start])
-z_run = np.array([z_start])
-
-
-
-line, = ax.plot(x_run, y_run, z_run, color='black', linewidth=2)
-def data_gen():
-    for _ in range(200):
-        yield _
-def run(data):
-    global x_run, y_run, z_run, line, mx, my,vx, vy, t
-    # update the data
-    dx,dy = surface.get_slope(x_run[-1], y_run[-1])
-    step_size = .1
-    b2x=0.9
-    b2y=0.9
-    bx =0.8
-    by =0.8
-
-    t = t + 1
-    mx = bx*mx + (1-bx)*dx
-    my = by*my + (1-by)*dy
-    # mx = mx/(1-bx**t)
-    # my = my/(1-by**t)
-    
-
-    vx= vx*b2x + (1-b2x)*dx*dx
-    vy= vy*b2y + (1-b2y)*dy*dy
-    # vx = vx/(1-b2x**t)
-    # vy = vy/(1-b2y**t)
-
-    print(f"t: {t}, Vx: {vx}, Vy: {vy}, Mx: {mx}, My: {my}, Bias Vx: {(1-b2x**t)}, Bias Vy: {(1-b2y**t)} Bias Mx: {(1-bx**t)}, Bias My: {(1-by**t)}\n")
-    
-    new_x = x_run[-1] - step_size * mx/(np.sqrt(vx)+1e-6)
-    new_y = y_run[-1] - step_size * my/(np.sqrt(vy)+1e-6)
-    new_z = surface.get_Z(new_x, new_y)
-    x_run = np.append(x_run, new_x)
-    y_run = np.append(y_run, new_y)
-    z_run = np.append(z_run, new_z)
-    line.set_data_3d([x_run, y_run, z_run])
-    return line,
-
-
-def init():
-    global x_run, y_run, z_run, line,vx, vy,mx,my, t
-
-    mx=0
-    my=0
-    vx=0
-    vy=0
-    t=0
-    x_run = np.array([x_start])
-    y_run = np.array([y_start]) 
-    z_run = np.array([z_start])
-    line.set_data_3d([x_run, y_run, z_run])
-    return line,
-# ax.plot(X2, Y2, Z2, color='black', linewidth=2)
-ani = animation.FuncAnimation(fig, run, data_gen,interval=200, save_count=200 ,init_func=init)
-ax.set_xlabel('X-axis')
-ax.set_ylabel('Y-axis')
-ax.set_zlabel('Z-axis')
 plt.show()
+
+# main()
+    
