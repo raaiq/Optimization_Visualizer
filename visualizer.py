@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 class ADAM_Optimization: 
     def __init__(self):
         self.B1 = 0.99
-        self.B2 = 0.99
+        self.B2 = 0.7
         self.eps = 1e-8
         self.reset()
 
