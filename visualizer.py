@@ -1,14 +1,17 @@
 import copy
 import torch
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from matplotlib import animation
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (needed for 3D projection)
 
 
 class ADAM_Optimization: 
-    def __init__(self):
+    def __init__(self, lr=0.1):
         self.B1 = 0.99
         self.B2 = 0.7
         self.eps = 1e-8
+        self.lr = lr
         self.reset()
 
     def reset(self):
@@ -16,7 +19,7 @@ class ADAM_Optimization:
         self.m = 0
         self.v= 0
     
-    def update(self, grad, lr=0.3):
+    def update(self, grad):
         self.t += 1
         self.m = self.B1*self.m + (1-self.B1)*grad
         self.v = self.B2*self.v + (1-self.B2)*(grad**2)
@@ -24,7 +27,7 @@ class ADAM_Optimization:
         m_hat = self.m/(1-self.B1**self.t)
         v_hat = self.v/(1-self.B2**self.t)
 
-        update = lr * m_hat/(v_hat+self.eps)**.5
+        update = self.lr * m_hat/(v_hat+self.eps)**.5
         return update
 
 class SGD:
@@ -88,8 +91,12 @@ class Surface:
 
 def simulate_optimizer(optimizer, surface, no_of_frames=200, x_start=-19.0, y_start=-9.0):
     # use a deepcopy so optimizer states don't interfere
-    opt = copy.deepcopy(optimizer)
-    opt.reset()
+    optx = copy.deepcopy(optimizer)
+    opty = copy.deepcopy(optimizer)
+
+    optx.reset()
+    opty.reset()
+
 
     xs = [float(x_start)]
     ys = [float(y_start)]
@@ -105,8 +112,8 @@ def simulate_optimizer(optimizer, surface, no_of_frames=200, x_start=-19.0, y_st
         dx = x_t.grad.item()
         dy = y_t.grad.item()
 
-        upd_x = opt.update(dx)
-        upd_y = opt.update(dy)
+        upd_x = optx.update(dx)
+        upd_y = opty.update(dy)
 
         new_x = xs[-1] - upd_x
         new_y = ys[-1] - upd_y
@@ -118,9 +125,9 @@ def simulate_optimizer(optimizer, surface, no_of_frames=200, x_start=-19.0, y_st
     return np.array(xs), np.array(ys), np.array(zs)
 
 
-def build_plotly_figure(surface, optimizers, names, colors, no_of_frames=200):
+def build_matplotlib_animation(surface, optimizers, names, colors, no_of_frames=400):
     # Create surface mesh
-    np_X, np_Y = np.meshgrid(np.arange(-20, 20, 0.1), np.arange(-10, 10, 0.1))
+    np_X, np_Y = np.meshgrid(np.arange(-20, 20, 0.2), np.arange(-10, 10, 0.2))
     X = torch.tensor(np_X, dtype=torch.float32)
     Y = torch.tensor(np_Y, dtype=torch.float32)
     Z = surface.getSurface(X, Y).numpy()
@@ -131,53 +138,57 @@ def build_plotly_figure(surface, optimizers, names, colors, no_of_frames=200):
         xs, ys, zs = simulate_optimizer(opt, surface, no_of_frames=no_of_frames)
         sim_results.append((xs, ys, zs))
 
-    # Build initial figure: surface + one trace per optimizer
-    fig = go.Figure()
-    fig.add_trace(go.Surface(x=np_X, y=np_Y, z=Z, colorscale='Plasma', opacity=0.6, showscale=False, name='surface'))
+    # build matplotlib figure
+    fig = plt.figure(figsize=(9, 7))
+    ax = fig.add_subplot(111, projection='3d')
+    surf = ax.plot_surface(np_X, np_Y, Z, cmap='plasma', alpha=0.6, linewidth=0, antialiased=False)
+    ax.set_xlim(-20, 20)
+    ax.set_ylim(-10, 10)
+    ax.set_zlim(Z.min(), Z.max())
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
 
-    # add scatter traces (initial single point)
+    lines = []
+    points = []
     for i, (xs, ys, zs) in enumerate(sim_results):
-        fig.add_trace(go.Scatter3d(x=[xs[0]], y=[ys[0]], z=[zs[0]], mode='lines+markers',
-                                   line=dict(color=colors[i], width=4), marker=dict(size=3), name=names[i]))
+        line, = ax.plot([], [], [], color=colors[i], lw=2, label=names[i])
+        point, = ax.plot([], [], [], marker='o', color=colors[i], markersize=5)
+        lines.append(line)
+        points.append(point)
+    ax.legend()
 
-    # frames: update the scatter traces (trace indices 1..n)
-    frames = []
-    trace_indices = list(range(1, 1 + len(sim_results)))
-    for k in range(1, no_of_frames + 1):
-        data = []
-        for xs, ys, zs in sim_results:
-            data.append(go.Scatter3d(x=xs[:k+1], y=ys[:k+1], z=zs[:k+1], mode='lines+markers',
-                                     line=dict(width=4)))
-        frames.append(go.Frame(data=data, name=str(k), traces=trace_indices))
+    def init():
+        for line, point in zip(lines, points):
+            line.set_data([], [])
+            line.set_3d_properties([])
+            point.set_data([], [])
+            point.set_3d_properties([])
+        return lines + points
 
-    fig.frames = frames
+    def update(frame):
+        # frame ranges from 0..no_of_frames
+        for idx, (xs, ys, zs) in enumerate(sim_results):
+            end = min(frame, len(xs)-1)
+            lines[idx].set_data(xs[:end+1], ys[:end+1])
+            lines[idx].set_3d_properties(zs[:end+1])
+            points[idx].set_data(xs[end:end+1], ys[end:end+1])
+            points[idx].set_3d_properties(zs[end:end+1])
+        return lines + points
 
-    # slider and play button
-    steps = []
-    for k in range(1, no_of_frames + 1):
-        step = dict(method='animate', args=[[str(k)], dict(mode='immediate', frame=dict(duration=50, redraw=True), transition=dict(duration=0))], label=str(k))
-        steps.append(step)
+    frames_total = no_of_frames + 1
+    anim = animation.FuncAnimation(fig, update, init_func=init, frames=frames_total, interval=50, blit=False)
 
-    sliders = [dict(active=0, pad=dict(t=50), steps=steps)]
-
-    fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
-                      width=900, height=700,
-                      updatemenus=[dict(type='buttons', showactive=False, y=0.05, x=0.1,
-                                        xanchor='right', yanchor='top',
-                                        pad=dict(t=45, r=10),
-                                        buttons=[dict(label='Play', method='animate', args=[None, dict(frame=dict(duration=50, redraw=True), fromcurrent=True, transition=dict(duration=0))]),
-                                                 dict(label='Pause', method='animate', args=[[None], dict(frame=dict(duration=0, redraw=False), mode='immediate', transition=dict(duration=0))])])],
-                      sliders=sliders)
-    return fig
+    plt.show()
+    return anim
 
 
 if __name__ == '__main__':
     surface = Surface()
     no_of_frames = 200
-    optimizers = [ADAM_Optimization(), SGD(lr=0.1), RMSProp(lr=0.1), SGD_Momentum(lr=0.1)]
+    optimizers = [ADAM_Optimization(lr=0.3), SGD(lr=0.3), RMSProp(lr=0.3), SGD_Momentum(lr=0.3)]
     names = ['ADAM', 'SGD', 'RMSProp', 'SGD_Mom']
     colors = ['black', 'red', 'green', 'blue']
 
-    fig = build_plotly_figure(surface, optimizers, names, colors, no_of_frames=no_of_frames)
-    fig.write_html("visualizer_output.html", auto_open=True)
+    anim = build_matplotlib_animation(surface, optimizers, names, colors, no_of_frames=no_of_frames)
 
