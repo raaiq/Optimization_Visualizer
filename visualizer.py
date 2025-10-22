@@ -1,5 +1,4 @@
 import copy
-from tkinter import filedialog, messagebox
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,80 +8,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import importlib.util
 import tkinter as tk
+import customtkinter
 from Interfaces import Optimizer_Interface, Surface_Interface
-
-
-class ADAM_Optimization: 
-    def __init__(self, lr=0.1):
-        self.B1 = 0.99
-        self.B2 = 0.7
-        self.eps = 1e-8
-        self.lr = lr
-        self.reset()
-
-    def reset(self):
-        self.t =0
-        self.m = 0
-        self.v= 0
-    
-    def update(self, grad):
-        self.t += 1
-        self.m = self.B1*self.m + (1-self.B1)*grad
-        self.v = self.B2*self.v + (1-self.B2)*(grad**2)
-
-        m_hat = self.m/(1-self.B1**self.t)
-        v_hat = self.v/(1-self.B2**self.t)
-
-        update = self.lr * m_hat/(v_hat+self.eps)**.5
-        return update
-    
-class RMSProp:
-    def __init__(self, lr=0.1, beta=0.9, eps=1e-8):
-        self.lr = lr
-        self.beta = beta
-        self.eps = eps
-        self.reset()
-    
-    def reset(self):
-        self.v = 0
-
-    def update(self, grad):
-        self.v = self.beta * self.v + (1-self.beta)*(grad**2)
-        update = self.lr * grad/(self.v+self.eps)**.5
-        return update
-class SGD_Momentum:
-    def __init__(self, lr=0.1, k_momentum=0.9):
-        self.lr = lr
-        self.k_momentum = k_momentum
-        self.reset()
-    
-    def reset(self):
-        self.v = 0
-
-    def update(self, grad):
-        self.v = self.k_momentum * self.v + self.lr * grad
-        return self.v
-
-class Surface:
-    def __init__(self):
-        self.num_peaks = 50
-        self.x_range = (-20, 20)
-        self.y_range = (-10, 10)
-        self.x_centers = np.random.uniform(self.x_range[0], self.x_range[1], self.num_peaks)
-        self.y_centers = np.random.uniform(self.y_range[0], self.y_range[1], self.num_peaks)
-        self.x_widths = np.random.uniform(0.5, 2, self.num_peaks)
-        self.y_widths = np.random.uniform(0.5, 2, self.num_peaks)
-
-        self.x_centers = torch.tensor(self.x_centers, dtype=torch.float32)
-        self.y_centers = torch.tensor(self.y_centers, dtype=torch.float32)
-        self.x_widths = torch.tensor(self.x_widths, dtype=torch.float32)
-        self.y_widths = torch.tensor(self.y_widths, dtype=torch.float32)
-    
-    def getSurface(self,x,y):
-        z = (x**2 + y**2) / 100  # parabolic component
-        for i in range(self.num_peaks):
-            z += torch.exp(-( (x - self.x_centers[i])**2/(2*self.x_widths[i]**2) + (y - self.y_centers[i])**2 / (2 * self.y_widths[i]**2)))
-        return z
 
 class Optimizer_Path:
     """ Class to keep track of the path taken by an optimizer on a surface"""
@@ -127,7 +54,7 @@ class Optimizer_Path:
             return np.array(self.xs), np.array(self.ys), np.array(self.zs)
 
 
-def build_matplotlib_animation(surface, optimizers, names, no_of_frames=400):
+def build_matplotlib_animation(surface, optimizers, names, fig, no_of_frames=400):
     """
     Build animation while computing optimizer steps on the fly (no full precomputation).
     """
@@ -140,10 +67,9 @@ def build_matplotlib_animation(surface, optimizers, names, no_of_frames=400):
     # create simulator instances (do not precompute trajectories)
     sims = [Optimizer_Path(opt, surface) for opt in optimizers]
 
-    # build matplotlib figure
-    fig = plt.figure(figsize=(9, 7))
+    # build matplotlib Figure (avoid plt.figure)
     ax = fig.add_subplot(111, projection='3d')
-    surf = ax.plot_surface(np_X, np_Y, Z, cmap='plasma', alpha=0.6, linewidth=0, antialiased=False)
+    surf = ax.plot_surface(np_X, np_Y, Z, cmap='plasma', alpha=0.3, linewidth=0, antialiased=False)
     ax.set_xlim(-20, 20)
     ax.set_ylim(-10, 10)
     ax.set_zlim(Z.min(), Z.max())
@@ -154,8 +80,8 @@ def build_matplotlib_animation(surface, optimizers, names, no_of_frames=400):
     lines = []
     points = []
     for i in range(len(sims)):
-        line, = ax.plot([], [], [], lw=2, label=names[i])
-        point, = ax.plot([], [], [], marker='o', markersize=5)
+        line, = ax.plot([], [], [], alpha=1, lw=2, label=names[i])
+        point, = ax.plot([], [], [], color=line.get_color(), alpha=1, marker='o', markersize=5)
         lines.append(line)
         points.append(point)
     ax.legend()
@@ -184,143 +110,70 @@ def build_matplotlib_animation(surface, optimizers, names, no_of_frames=400):
         return lines + points
 
     frames_total = no_of_frames + 1
-    anim = animation.FuncAnimation(fig, update, init_func=init, frames=frames_total, interval=50, blit=False)
-    plt.show()
+
+    # create the animation after the canvas exists (if any)
+    anim = animation.FuncAnimation(fig, update, init_func=init, frames=frames_total, interval=25, blit=False)
+
     return anim
-    # # embed into Tk
-    # canvas = FigureCanvasTkAgg(fig, master=parent_frame)
-    # widget = canvas.get_tk_widget()
-    # widget.pack(fill='both', expand=True)
-    # toolbar = NavigationToolbar2Tk(canvas, parent_frame)
-    # toolbar.update()
-    # canvas._tkcanvas.pack(fill='x')
-
-    # # keep reference to anim and canvas on the frame so GC does not stop the animation
-    # parent_frame._anim = anim
-    # parent_frame._canvas = canvas
-    # return anim, canvas
 
 
-# if __name__ == '__main__':
-#     surface = Surface()
-#     no_of_frames = 200
-#     optimizers = [ADAM_Optimization(lr=0.3), SGD(lr=0.3), RMSProp(lr=0.3), SGD_Momentum(lr=0.3)]
-#     names = ['ADAM', 'SGD', 'RMSProp', 'SGD_Mom']
-#     colors = ['black', 'red', 'green', 'blue']
+class Optimizer_Selector(customtkinter.CTkFrame):
+    """ Frame for selecting optimizers to visualize """
+    def __init__(self, master, optimizers, title="Select Optimizers"):
+        super().__init__(master)
+        self.optimizers = optimizers
+        self.checkboxes = []
+        self.title = customtkinter.CTkLabel(master=self, text=title, fg_color="gray30", corner_radius=6)
+        self.title.grid(row=0, column=0, padx=20, pady=(10, 0), sticky="ew")
+        self.grid_columnconfigure(0, weight=1)
 
-#     anim = build_matplotlib_animation(surface, optimizers, names, colors, no_of_frames=no_of_frames)
+        for i, name in enumerate(self.optimizers):
+            checkbox = customtkinter.CTkCheckBox(master=self, text=name)
+            checkbox.grid(row=i+1, column=0, padx=20, pady=(20, 0), sticky="w")
+            self.checkboxes.append(checkbox)
+    
+    def get_selected_optimizers(self):
+        selected_opts = []
+        for i, checkbox in enumerate(self.checkboxes):
+            if checkbox.get():
+                selected_opts.append(self.optimizers[i])
+        return selected_opts
 
+class GUI(customtkinter.CTk):
+    """ Main GUI class for the optimizer visualizer application """
+    def __init__(self, optimizers, surface, names):
+        super().__init__()
+        self.title("Optimizer Visualizer")
 
+        self._resize_timer = None
+        self.animation_frame = customtkinter.CTkFrame(master=self)
+        self.animation_frame.grid(row=0, column=0, sticky="nsew")
+        # make a container frame for the animation so layout is stable
+        fig = Figure(figsize=(9, 7))
 
-def load_custom_optimizers_from_file(path):
-    """
-    Load a user-provided Python file that should expose either:
-      - get_optimizers() -> list of (instance, name, color)
-      - CUSTOM_OPTIMIZERS -> list of (instance, name, color)
-    Returns list of (instance, name, color) or raises Exception.
-    """
-    spec = importlib.util.spec_from_file_location("custom_optim_module", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    if hasattr(mod, "get_optimizers") and callable(mod.get_optimizers):
-        items = mod.get_optimizers()
-    elif hasattr(mod, "CUSTOM_OPTIMIZERS"):
-        items = mod.CUSTOM_OPTIMIZERS
-    else:
-        raise ValueError("Module must define get_optimizers() or CUSTOM_OPTIMIZERS list")
-
-    # Normalize and validate
-    normalized = []
-    for it in items:
-        if isinstance(it, dict):
-            inst = it.get("instance")
-            name = it.get("name")
-            color = it.get("color", "black")
-        elif isinstance(it, (list, tuple)) and len(it) >= 2:
-            inst = it[0]
-            name = it[1]
-            color = it[2] if len(it) > 2 else "black"
-        else:
-            raise ValueError("Each optimizer entry must be (instance, name[, color]) or dict")
-
-        if not (hasattr(inst, "update") and callable(inst.update) and hasattr(inst, "reset")):
-            raise ValueError(f"Optimizer {name} does not implement required API (reset, update)")
-
-        normalized.append((inst, name, color))
-    return normalized
+        self.canvas = FigureCanvasTkAgg(fig, master=self.animation_frame)
+        widget = self.canvas.get_tk_widget()
+        widget.grid(row=0, column=0, sticky="nsew")
+        self.anim = build_matplotlib_animation(optimizers=optimizers, surface=surface, names=names, fig=fig)
 
 
-def run_gui():
-    surface = Surface()
-    no_of_frames = 200
+        self.optimizer_selector = Optimizer_Selector(master=self, optimizers=names)
+        self.optimizer_selector.grid(row=0, column=1, padx=10, pady=10, sticky="new")
+        self.bind("<Configure>", self.on_resize)
+    
+    # Stop animation during resize to avoid performance issues
+    def on_resize(self, event):
+        if self._resize_timer:
+            self.after_cancel(self._resize_timer)
+        self.anim.pause()
 
-    # default optimizers
-    initial = [
-        (ADAM_Optimization(lr=0.3), 'ADAM', 'black'),
-        (RMSProp(lr=0.3), 'RMSProp', 'green'),
-        (SGD_Momentum(lr=0.3), 'SGD_Mom', 'blue'),
-    ]
-    current_opts = initial.copy()
+        self._resize_timer = self.after(500, self.on_resize_complete)
 
-    def on_load():
-        path = filedialog.askopenfilename(
-            title="Select optimizer Python file",
-            filetypes=[("Python files", "*.py"), ("All files", "*.*")]
-        )
-        if not path:
-            return
-        try:
-            loaded = load_custom_optimizers_from_file(path)
-            # deep-copy instances so states don't carry over between runs
-            current_opts.clear()
-            for inst, name, color in loaded:
-                current_opts.append((copy.deepcopy(inst), name, color))
-            messagebox.showinfo("Loaded", f"Loaded {len(current_opts)} optimizer(s) from {path}")
-        except Exception as e:
-            messagebox.showerror("Error loading module", str(e))
+    # Resume animation after resize is complete
+    def on_resize_complete(self):
+        self.anim.resume()
+        self._resize_timer = None
 
-    def on_run():
-        if not current_opts:
-            messagebox.showwarning("No optimizers", "No optimizers to run. Load one first or use defaults.")
-            return
-        # prepare lists
-        optimizers = [copy.deepcopy(inst) for inst, _, _ in current_opts]
-        names = [name for _, name, _ in current_opts]
-        colors = [color for _, _, color in current_opts]
-
-        # close GUI before running matplotlib (so event loops don't clash)
-        root.destroy()
-        build_matplotlib_animation(surface, optimizers, names, colors, no_of_frames=no_of_frames)
-
-    def on_reset_defaults():
-        current_opts.clear()
-        for inst, name, color in initial:
-            current_opts.append((copy.deepcopy(inst), name, color))
-        messagebox.showinfo("Reset", "Reverted to default optimizers")
-
-    root = tk.Tk()
-    root.title("Optimizer Visualizer - Load Custom Optimizers")
-
-    frm = tk.Frame(root, padx=10, pady=10)
-    frm.pack()
-
-    lbl = tk.Label(frm, text="Load a Python file that exposes get_optimizers() or CUSTOM_OPTIMIZERS")
-    lbl.pack(pady=(0,8))
-
-    btn_load = tk.Button(frm, text="Load optimizer file...", width=30, command=on_load)
-    btn_load.pack(pady=4)
-
-    btn_defaults = tk.Button(frm, text="Reset to defaults", width=30, command=on_reset_defaults)
-    btn_defaults.pack(pady=4)
-
-    btn_run = tk.Button(frm, text="Run animation", width=30, command=on_run)
-    btn_run.pack(pady=(12,4))
-
-    btn_quit = tk.Button(frm, text="Quit", width=30, command=root.destroy)
-    btn_quit.pack(pady=4)
-
-    root.mainloop()
 
 
 
@@ -329,7 +182,8 @@ if __name__ == '__main__':
     from Surfaces import surface_classes
 
     optimizers = [opt() for opt in optimizer_classes]
-    surface = surface_classes[0]() 
-    anim = build_matplotlib_animation(surface, optimizers, [opt.__name__ for opt in optimizer_classes], no_of_frames=400)
-    anim
+    surface = surface_classes[0]()
+
+    gui = GUI(surface=surface, optimizers=optimizers, names=[opt.__name__ for opt in optimizer_classes])
+    gui.mainloop()
 # ...existing

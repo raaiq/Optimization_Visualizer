@@ -5,6 +5,8 @@ import inspect
 from pathlib import Path
 
 
+# TODO: Check if new optimizers are imported dynaiqmically when a new file is added
+
 # List to hold all imported optimizer
 optimizer_classes = []
 
