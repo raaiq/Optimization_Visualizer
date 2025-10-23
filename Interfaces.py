@@ -1,6 +1,12 @@
 from abc import ABCMeta, abstractmethod
 
 class Optimizer_Interface(metaclass = ABCMeta):
+
+    def __init__(self, learning_rate: float):
+        self.config = {
+            "learning_rate": learning_rate
+            }
+    
     @abstractmethod
     def reset(self):
         """
@@ -21,6 +27,12 @@ class Optimizer_Interface(metaclass = ABCMeta):
         """
         pass
 
+    def get_config(self):
+        """
+        Returns the configuration dictionary of the optimizer.
+        """
+        return self.config
+
 class Surface_Interface(metaclass =ABCMeta):
     @abstractmethod
     def getSurface(self, x, y):
@@ -32,6 +44,7 @@ class Surface_Interface(metaclass =ABCMeta):
         y: The y-coordinate (can be a tensor or numpy array).
 
         Returns:
-        The z-value of the surface at (x, y).
+        The z-value(s) of the surface at (x, y).
         """
         pass
+

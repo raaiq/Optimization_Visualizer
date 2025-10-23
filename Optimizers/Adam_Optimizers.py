@@ -2,10 +2,10 @@ from Interfaces import Optimizer_Interface
 
 class ADAM_Optimization(Optimizer_Interface): 
     def __init__(self, lr=0.3, mbeta= 0.9, vbeta=0.999, eps=1e-8):
-        self.mbeta = mbeta
-        self.vbeta = vbeta
-        self.eps = eps
-        self.lr = lr
+        super().__init__(learning_rate=lr)
+        self.config["mbeta"] = mbeta
+        self.config["vbeta"] = vbeta
+        self.config["eps"] = eps
         self.reset()
 
     def reset(self):
@@ -15,13 +15,20 @@ class ADAM_Optimization(Optimizer_Interface):
     
     def update(self, grad):
         self.t += 1
-        self.m = self.mbeta*self.m + (1-self.mbeta)*grad
-        self.v = self.vbeta*self.v + (1-self.vbeta)*(grad**2)
 
-        m_hat = self.m/(1-self.mbeta**self.t)
-        v_hat = self.v/(1-self.vbeta**self.t)
+        # Extract config parameters for easier access
+        mbeta = self.config["mbeta"]
+        vbeta = self.config["vbeta"]
+        eps = self.config["eps"]
+        lr = self.config["learning_rate"]
 
-        update = self.lr * m_hat/(v_hat+self.eps)**.5
+        self.m = mbeta*self.m + (1-mbeta)*grad
+        self.v = vbeta*self.v + (1-vbeta)*(grad**2)
+
+        m_hat = self.m/(1-mbeta**self.t)
+        v_hat = self.v/(1-vbeta**self.t)
+
+        update = lr * m_hat/(v_hat+eps)**.5
         return update
 
 
@@ -31,8 +38,15 @@ class Adam_No_Correction(ADAM_Optimization):
 
     def update(self, grad):
         self.t += 1
-        self.m = self.mbeta*self.m + (1-self.mbeta)*grad
-        self.v = self.vbeta*self.v + (1-self.vbeta)*(grad**2)
 
-        update = self.lr * self.m/(self.v+self.eps)**.5
+                # Extract config parameters for easier access
+        mbeta = self.config["mbeta"]
+        vbeta = self.config["vbeta"]
+        eps = self.config["eps"]
+        lr = self.config["learning_rate"]
+
+        self.m = mbeta*self.m + (1-mbeta)*grad
+        self.v = vbeta*self.v + (1-vbeta)*(grad**2)
+
+        update = lr * self.m/(self.v+eps)**.5
         return update
