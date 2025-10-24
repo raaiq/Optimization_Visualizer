@@ -1,13 +1,11 @@
 import copy
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib import animation
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (needed for 3D projection)
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import importlib.util
-import tkinter as tk
 import customtkinter
 from Interfaces import Optimizer_Interface, Surface_Interface
 
@@ -65,14 +63,10 @@ class Animation_Controller:
     def __init__(self, fig: Figure, surface:Surface_Interface, optimizers:list[Optimizer_Interface], x_lim =(-20,20), y_lim =(-10,10), total_frames=400):
         # store parameters
         self.surface = surface
-        self.optimizers = {opt.__class__.__name__: opt for opt in optimizers}
         self.xlim = x_lim
         self.ylim = y_lim
         self.total_frames = total_frames
         self.fig = fig
-
-        # create simulator instances (do not precompute trajectories)
-        self.trajectories = [Optimizer_Path(opt, surface) for opt in optimizers]
 
         # render/build surface (avoid plt.figure)
         self.ax = fig.add_subplot(111, projection='3d')
@@ -83,14 +77,16 @@ class Animation_Controller:
         self._plot_surface_()
 
         # Initialize lines and points for each optimizer
+        # create simulator instances (do not precompute trajectories)
+        self.trajectories = {}
+
+        # Need to keep references to lines and points to return in update and init function (required by FuncAnimation)
         self.lines = []
         self.points = []
-        for label in self.optimizers.keys():
-            line, = ax.plot([], [], [], alpha=1, lw=2, label=label)
-            point, = ax.plot([], [], [], color=line.get_color(), alpha=1, marker='o', markersize=5)
-            self.lines.append(line)
-            self.points.append(point)
-        ax.legend() #Not sure if I need to call this after adding new optimizers
+
+        for optimizer in optimizers:
+            self.add_optimizer(optimizer) 
+        self._refresh_legend_()
 
         # Create the matplotlib animation
         self.anim = animation.FuncAnimation(fig, func = self._update_, init_func=self._reset_, frames=total_frames, interval=25, blit=True)
@@ -112,56 +108,72 @@ class Animation_Controller:
 
 
     def _reset_(self):
-        for line, point in zip(self.lines, self.points):
+        for (_, line, point) in self.trajectories.values():
             line.set_data([], [])
             line.set_3d_properties([])
             point.set_data([], [])
             point.set_3d_properties([])
         return self.lines + self.points
 
+
     # This method allows the user to skip to any time frame ahead of time, since this method will
     # simulate all the steps up to that frame if not already done
     def _update_(self, frame):
-        trajectories = self.trajectories
-        lines = self.lines
-        points = self.points
-
-        for idx, traj in enumerate(trajectories):
-            while len(traj) < frame:
-                traj.step()
-            xs, ys, zs = traj.history()
+        for (model, line, point) in self.trajectories.values():
+            while len(model) < frame:
+                model.step()
+            xs, ys, zs = model.history()
             pointStartIdx= frame-1 if frame>0 else 0
 
              # TODO: optimize by only updating new data if possible
-            self.lines[idx].set_data(xs[:frame], ys[:frame])
-            self.lines[idx].set_3d_properties(zs[:frame])
-            self.points[idx].set_data(xs[pointStartIdx:frame], ys[pointStartIdx:frame])
-            self.points[idx].set_3d_properties(zs[pointStartIdx:frame])
-        return lines + points
+            line.set_data(xs[:frame], ys[:frame])
+            line.set_3d_properties(zs[:frame])
+            point.set_data(xs[pointStartIdx:frame], ys[pointStartIdx:frame])
+            point.set_3d_properties(zs[pointStartIdx:frame])
+        return self.lines + self.points
     
+    def _refresh_legend_(self):
+        self.ax.legend(handles = [line for line in self.lines if line.get_visible()])
+        self.fig.canvas.draw_idle()
+
+    def get_visible_optimizers(self): 
+        return [name for name, (_, line, _) in self.trajectories.items() if line.get_visible()]
     def set_range(self, xlim:tuple, ylim:tuple):
         self.xlim = xlim
         self.ylim = ylim
         self._plot_surface_()
     
     def add_optimizer(self, optimizer:Optimizer_Interface):
-        name = optimizer.__class__.__name__
-        self.optimizers[name] = optimizer
-        self.trajectories.append(Optimizer_Path(optimizer, self.surface))
 
+        name = optimizer.__class__.__name__
+        model = Optimizer_Path(optimizer, self.surface)
         line, = self.ax.plot([], [], [], alpha=1, lw=2, label=name)
         point, = self.ax.plot([], [], [], color=line.get_color(), alpha=1, marker='o', markersize=5)
+        self.trajectories[name]= (model, line, point)
         self.lines.append(line)
         self.points.append(point)
     
-    def remove_optimizer(self, name:str):
-        self.optimizers.pop(name)
+
+    def toggle_optimizer(self, name:str):
+        optimizer_pack = self.trajectories.get(name)
+        if optimizer_pack is None:
+            return
         
-        # find and remove corresponding trajectory
-        for i, traj in enumerate(self.trajectories):
-            if traj.optx.__class__.__name__ == name:
-                self.trajectories.pop(i)
-                break
+        visible = optimizer_pack[1].get_visible()
+        optimizer_pack[1].set_visible(not visible)
+        optimizer_pack[2].set_visible(not visible)
+        self._refresh_legend_()
+
+    def remove_optimizer(self, name:str):
+        optimizer_pack = self.trajectories.pop(name, None)
+        if optimizer_pack is None:
+            return
+        
+        optimizer_pack[1].remove()
+        optimizer_pack[2].remove()
+        self.lines.remove(optimizer_pack[1])
+        self.points.remove(optimizer_pack[2])
+        self._refresh_legend_()
     
     """ Pause the animation """
     def pause(self):
@@ -244,15 +256,21 @@ class GUI(customtkinter.CTk):
         widget = self.canvas.get_tk_widget()
         widget.grid(row=0, column=0, sticky="nsew")
 
-        names = list(self.optimizer_name_map.keys())
+        self.names = list(self.optimizer_name_map.keys())
         self.optimizer_selector = Optimizer_Selector(
             master=self,
-            optimizers=names,
+            optimizers=self.names,
             command=self.on_optimizer_selection_change,
         )
         self.optimizer_selector.grid(row=0, column=1, padx=10, pady=10, sticky="new")
         self.optimizer_selector.select_all(notify=False)
-        self._update_animation(names)
+
+        optimizers = [self.optimizer_name_map[name]() for name in self.names]
+        self.animation_controller = Animation_Controller(
+            fig=self.figure,
+            surface=self.surface,
+            optimizers=optimizers,
+        )
 
         self.bind("<Configure>", self.on_resize)
 
@@ -275,13 +293,7 @@ class GUI(customtkinter.CTk):
         self._update_animation(selected_names)
 
     def _update_animation(self, selected_names):
-        if self.anim is not None:
-            if hasattr(self.anim, "event_source") and self.anim.event_source:
-                self.anim.event_source.stop()
-            self.anim = None
-        self.animation_controller = None
 
-        self.figure.clf()
 
         if not selected_names:
             ax = self.figure.add_subplot(111)
@@ -289,15 +301,13 @@ class GUI(customtkinter.CTk):
             ax.set_axis_off()
             self.canvas.draw()
             return
-
-        optimizers = [self.optimizer_name_map[name]() for name in selected_names]
-        self.animation_controller = Animation_Controller(
-            fig=self.figure,
-            surface=self.surface,
-            optimizers=optimizers,
-        )
-        self.anim = self.animation_controller.anim
-        self.canvas.draw_idle()
+        
+        optimizer_to_toggle = [ name for name in self.names if name not in selected_names]
+        optimizer_to_toggle.extend([ name for name in selected_names if name not in self.animation_controller.get_visible_optimizers()])
+        for name in optimizer_to_toggle:
+            self.animation_controller.toggle_optimizer(name)
+        # for name in selected_names:
+        #     self.animation_controller.show_optimizer(name)
 
 
 
